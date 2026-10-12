@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cuadro a cuadro</title>
+<style>
+:root{--bg:#10142a;--panel:#1a1f3d;--line:#2f3663;--text:#ecebff;--mute:#9a9cc8;--accent:#ff5c8a}
+@media (prefers-color-scheme:light){:root{--bg:#f1f0fb;--panel:#fff;--line:#d6d4ee;--text:#1a1f3d;--mute:#5d6090}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 "Avenir Next",system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:24px 16px;display:grid;gap:20px;grid-template-columns:1fr 1fr}
+@media(max-width:760px){main{grid-template-columns:1fr}}
+h1{grid-column:1/-1;margin:0;font-size:2rem;letter-spacing:-.02em}
+h1 small{display:block;font-size:1rem;font-weight:400;color:var(--mute)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:14px;align-content:start}
+label{font-weight:600;font-size:.9rem}
+#drop{border:2px dashed var(--line);border-radius:10px;min-height:190px;display:grid;place-items:center;text-align:center;color:var(--mute);cursor:pointer;overflow:hidden}
+#drop.over{border-color:var(--accent)}
+#drop img{width:100%;max-height:300px;object-fit:contain}
+textarea{width:100%;min-height:96px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;resize:vertical}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip,.seg button{background:none;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font:inherit;font-size:.85rem;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.seg{display:flex;gap:6px}
+.seg button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+#go{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:13px;font:inherit;font-weight:700;cursor:pointer}
+#go:disabled{opacity:.5;cursor:wait}
+#out{min-height:260px;display:grid;place-items:center;text-align:center;color:var(--mute);background:var(--bg);border-radius:10px;padding:12px}
+video{width:100%;border-radius:8px}
+a.dl{color:var(--accent);font-weight:600}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+<h1>Cuadro a cuadro<small>Subí una imagen, describí el movimiento y generá el video.</small></h1>
+
+<section>
+  <div>
+    <label for="file">Imagen de partida</label>
+    <div id="drop" tabindex="0" role="button" aria-label="Elegir imagen">Arrastrá una imagen o tocá para elegirla</div>
+    <input id="file" type="file" accept="image/*" hidden>
+  </div>
+  <div>
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" placeholder="Ej: la cámara avanza despacio mientras el viento mueve el pelo"></textarea>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div class="row">
+    <div><label>Duración</label>
+      <div class="seg" data-k="duration"><button aria-pressed="true" data-v="5">5 s</button><button aria-pressed="false" data-v="10">10 s</button></div></div>
+    <div><label>Calidad</label>
+      <div class="seg" data-k="quality"><button aria-pressed="false" data-v="standard">Estándar</button><button aria-pressed="true" data-v="pro">Alta</button></div></div>
+  </div>
+  <button id="go">Generar video</button>
+</section>
+
+<section>
+  <label>Resultado</label>
+  <div id="out">Acá va a aparecer el video.</div>
+</section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const opts = { duration: "5", quality: "pro" };
+let image = null;
+
+["Cámara acercándose","Paneo lento a la derecha","Órbita alrededor del sujeto","Cámara en mano","Zoom out","Cámara lenta"]
+  .forEach((t) => {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = t;
+    b.onclick = () => { const p = $("#prompt"); p.value = (p.value.trim() + " " + t.toLowerCase() + ".").trim(); };
+    $("#chips").appendChild(b);
+  });
+
+document.querySelectorAll(".seg").forEach((seg) =>
+  seg.addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    seg.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+    opts[seg.dataset.k] = b.dataset.v;
+  }));
+
+const drop = $("#drop");
+drop.onclick = () => $("#file").click();
+drop.onkeydown = (e) => (e.key === "Enter" || e.key === " ") && $("#file").click();
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove("over"); load(e.dataTransfer.files[0]); };
+$("#file").onchange = (e) => load(e.target.files[0]);
+
+function load(f) {
+  if (!f || !f.type.startsWith("image/")) return;
+  const r = new FileReader();
+  r.onload = () => { image = r.result; drop.innerHTML = `<img src="${image}" alt="Imagen elegida">`; };
+  r.readAsDataURL(f);
+}
+
+async function apiFetch(url, opts = {}) {
+  const send = () => fetch(url, { ...opts, headers: { ...(opts.headers || {}), "x-password": localStorage.getItem("pw") || "" } });
+  let r = await send();
+  if (r.status === 401) {
+    const pw = prompt("Contraseña de la app:");
+    if (pw === null) return r;
+    localStorage.setItem("pw", pw);
+    r = await send();
+    if (r.status === 401) localStorage.removeItem("pw");
+  }
+  return r;
+}
+
+const say = (html) => ($("#out").innerHTML = html);
+
+$("#go").onclick = async () => {
+  if (!image) return say("Primero elegí una imagen.");
+  const prompt = $("#prompt").value.trim();
+  if (!prompt) return say("Escribí un prompt describiendo el movimiento.");
+  $("#go").disabled = true;
+  say("Enviando…");
+  try {
+    const r = await apiFetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image, prompt, ...opts }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    const t0 = Date.now();
+    while (true) {
+      await new Promise((ok) => setTimeout(ok, 3000));
+      const s = await (await apiFetch("/api/status/" + d.id)).json();
+      if (s.status === "succeeded") {
+        say(`<div><video src="${s.output}" controls autoplay loop playsinline></video><p><a class="dl" href="${s.output}" download>Descargar video</a></p></div>`);
+        break;
+      }
+      if (s.status === "failed" || s.status === "canceled") throw new Error(s.error || "La generación falló.");
+      say(`Generando… ${Math.round((Date.now() - t0) / 1000)} s<br>Puede tardar algunos minutos.`);
+    }
+  } catch (e) {
+    say("No se pudo generar: " + e.message);
+  }
+  $("#go").disabled = false;
+};
+</script>
+</body>
+</html>
